@@ -1,7 +1,41 @@
-- name: Clone and build ppcdis
-  run: |
-    git clone --depth 1 https://github.com/SeekyCt/ppcdis.git
-    ls ppcdis/Cargo.toml && echo "Cargo.toml found" || echo "Cargo.toml missing"
-    cargo build --release --manifest-path ppcdis/Cargo.toml
-    cp ppcdis/target/release/ppcdis .
-    rm -rf ppcdis
+name: Split main.dol with ppcdis (build from source)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout your repository
+      uses: actions/checkout@v4
+
+    - name: Install latest stable Rust
+      run: rustup update stable
+
+    - name: Clone and build ppcdis
+      run: |
+        git clone --depth 1 https://github.com/SeekyCt/ppcdis.git
+        # Verify the clone contains a Cargo.toml
+        test -f ppcdis/Cargo.toml || (echo "Cargo.toml not found!" && exit 1)
+        # Build using the exact path to the manifest
+        cargo build --release --manifest-path ppcdis/Cargo.toml
+        cp ppcdis/target/release/ppcdis .
+        rm -rf ppcdis
+
+    - name: Run ppcdis split
+      run: ./ppcdis split main.dol --out src
+
+    - name: Clean up ppcdis binary
+      run: rm ./ppcdis
+
+    - name: Commit generated project files
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add src/
+        git commit -m "Initial split of main.dol with ppcdis (built from source)" || echo "Nothing to commit"
+        git push
