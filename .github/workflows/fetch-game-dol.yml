@@ -13,21 +13,9 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Get ppcdis latest release download URL
-      id: get_url
+    - name: Download ppcdis (v0.4.3)
       run: |
-        # Fetch the latest release info from the GitHub API
-        API_URL="https://api.github.com/repos/SeekyCt/ppcdis/releases/latest"
-        ASSET_URL=$(curl -s $API_URL | jq -r '.assets[] | select(.name | test("linux-x86_64.*\\.zip$")) | .browser_download_url')
-        if [ -z "$ASSET_URL" ]; then
-          echo "Failed to find the Linux zip asset"
-          exit 1
-        fi
-        echo "asset_url=$ASSET_URL" >> $GITHUB_OUTPUT
-
-    - name: Download ppcdis
-      run: |
-        wget -nv -O ppcdis.zip "${{ steps.get_url.outputs.asset_url }}"
+        wget -nv -O ppcdis.zip https://github.com/SeekyCt/ppcdis/releases/download/v0.4.3/ppcdis-linux-x86_64.zip
         unzip ppcdis.zip
         chmod +x ppcdis
 
