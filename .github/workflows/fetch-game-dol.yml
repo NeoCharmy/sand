@@ -25,20 +25,13 @@ jobs:
         pip install -e .
         cd ..
 
-    - name: Find ppcdis entry point and run split
+    - name: Run the ppcdis script directly
       run: |
-        # The entry point is likely ppcdis/cli.py or ppcdis/__init__.py
-        # We'll try common patterns and pick the first one that works.
-        if [ -f "ppcdis/cli.py" ]; then
-          python -m ppcdis.cli split main.dol --out src
-        elif [ -f "ppcdis/__init__.py" ]; then
-          # Check if there is a function called main in __init__.py
-          python -c "import ppcdis; ppcdis.main()" 2>/dev/null && python -c "import ppcdis; ppcdis.main()" -- split main.dol --out src
-        else
-          echo "Could not find entry point, listing ppcdis directory:"
-          ls ppcdis/
-          exit 1
-        fi
+        # The setup.py entry point installs a script called 'ppcdis' in the local bin
+        # We'll use the full path to be safe
+        python ppcdis/setup.py develop 2>/dev/null || true
+        # Alternatively, just use the CLI directly as defined in pyproject.toml
+        python ./ppcdis/makesrc.py split main.dol --out src
 
     - name: Commit generated project
       run: |
