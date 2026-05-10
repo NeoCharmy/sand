@@ -13,21 +13,30 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Get ppcdis latest release download URL
+      id: get_url
+      run: |
+        # Fetch the latest release info from the GitHub API
+        API_URL="https://api.github.com/repos/SeekyCt/ppcdis/releases/latest"
+        ASSET_URL=$(curl -s $API_URL | jq -r '.assets[] | select(.name | test("linux-x86_64.*\\.zip$")) | .browser_download_url')
+        if [ -z "$ASSET_URL" ]; then
+          echo "Failed to find the Linux zip asset"
+          exit 1
+        fi
+        echo "asset_url=$ASSET_URL" >> $GITHUB_OUTPUT
+
     - name: Download ppcdis
       run: |
-        wget -nv -O ppcdis.zip https://github.com/SeekyCt/ppcdis/releases/latest/download/ppcdis-linux-x86_64.zip
+        wget -nv -O ppcdis.zip "${{ steps.get_url.outputs.asset_url }}"
         unzip ppcdis.zip
         chmod +x ppcdis
 
     - name: Run ppcdis split
       run: |
         ./ppcdis split main.dol --out src
-        # If the tool supports just `ppcdis split main.dol` without --out, try:
-        # ./ppcdis split main.dol
-        # But we'll keep the full form for safety.
 
-    - name: Clean up ppcdis binary
-      run: rm ppcdis ppcdis.zip
+    - name: Clean up ppcdis
+      run: rm -f ppcdis ppcdis.zip
 
     - name: Commit generated project files
       run: |
