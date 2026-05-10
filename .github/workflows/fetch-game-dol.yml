@@ -1,42 +1,84 @@
-name: Split main.dol with ppcdis (final)
+name: Recomp Wii Menu
 
 on:
+  push:
+    paths:
+      - 'main.dol'
+      - '.github/workflows/recomp.yml'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  split:
+  recomp:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout your repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-    - name: Clone and install ppcdis
-      run: |
-        git clone --depth 1 https://github.com/SeekyCt/ppcdis.git
-        cd ppcdis
-        pip install -e .
-        cd ..
+      - name: Install dependencies for ppcdis
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build
+          pip install sortedcontainers
 
-    - name: Run the ppcdis script directly
-      run: |
-        # The setup.py entry point installs a script called 'ppcdis' in the local bin
-        # We'll use the full path to be safe
-        python ppcdis/setup.py develop 2>/dev/null || true
-        # Alternatively, just use the CLI directly as defined in pyproject.toml
-        python ./ppcdis/makesrc.py split main.dol --out src
+      - name: Clone ppcdis (source only, no release download)
+        run: |
+          git clone https://github.com/SeekyCt/ppcdis.git
+          cd ppcdis
+          git submodule update --init --recursive
 
-    - name: Commit generated project
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add src/
-        git commit -m "Initial split of main.dol with ppcdis" || echo "Nothing to commit"
-        git push
+      - name: Build ppcdis
+        run: |
+          cd ppcdis
+          mkdir build && cd build
+          cmake -G Ninja ..
+          ninja
+
+      - name: Run ppcdis disassembler on main.dol
+        run: |
+          mkdir recomp_output
+          cd ppcdis
+          # Generate C++ code from main.dol
+          ./build/ppcdis --dol ../main.dol --output ../recomp_output --cpp
+
+      - name: Try to isolate menu related files
+        run: |
+          mkdir menu_isolated
+          # Search for common menu strings in the generated C++ files
+          grep -l -i "menu\|option\|start\|select\|press start" recomp_output/*.cpp > menu_files.txt
+          # Copy those files into menu_isolated folder
+          if [ -s menu_files.txt ]; then
+            while IFS= read -r file; do
+              cp "$file" menu_isolated/
+            done < menu_files.txt
+            cp recomp_output/*.h menu_isolated/ 2>/dev/null || true
+          else
+            echo "No explicit menu files found by grep. Copying all .cpp files as fallback."
+            cp recomp_output/*.cpp menu_isolated/ 2>/dev/null || true
+            cp recomp_output/*.h menu_isolated/ 2>/dev/null || true
+          fi
+
+      - name: Create a summary report
+        run: |
+          echo "## Recompilation summary" > summary.md
+          echo "- main.dol processed by ppcdis" >> summary.md
+          echo "- Generated C++ files in 'recomp_output'" >> summary.md
+          echo "- Isolated menu-related files in 'menu_isolated'" >> summary.md
+          echo "" >> summary.md
+          echo "### Next steps for Dreamcast port" >> summary.md
+          echo "1. Study the isolated menu C++ code." >> summary.md
+          echo "2. Replace Wii graphics calls (GX) with Dreamcast PVR calls." >> summary.md
+          echo "3. Adapt input, file loading, and memory management." >> summary.md
+
+      - name: Upload artifacts (menu recomp output)
+        uses: actions/upload-artifact@v4
+        with:
+          name: menu_recomp_output
+          path: |
+            menu_isolated/
+            summary.md
+            recomp_output/  # full recomp output in case you need it
