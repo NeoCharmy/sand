@@ -22,14 +22,15 @@ jobs:
       run: |
         git clone --depth 1 https://github.com/SeekyCt/ppcdis.git
         cd ppcdis
-        pip install -e .           # install the package
+        pip install -e .
         cd ..
-        # Verify that the `ppcdis` command is now available
-        ppcdis --help || echo "ppcdis command not found; trying module form"
 
-    - name: Run ppcdis split
+    - name: Verify ppcdis is installed
+      run: python -m ppcdis --help
+
+    - name: Run ppcdis split (using python module)
       run: |
-        ppcdis split main.dol --out src
+        python -m ppcdis split main.dol --out src
 
     - name: Commit generated project
       run: |
