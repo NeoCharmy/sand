@@ -15,10 +15,10 @@ jobs:
 
     - name: Download the .dol file
       run: |
-        wget -nv -O main.dol "https://dl.sonichotspot.ir/eggmanland/ssasr/boot.dol"
+        wget -nv -O main.dol "https://dl.sonichotspot.ir/eggmanland/ssasr/main.dol"
         # If your file has a different name, change the URL above
         # Example: if it's named game.dol, use:
-        # wget -nv -O main.dol "https://dl.sonichotspot.ir/eggmanland/ssasr/game.dol"
+        # wget -nv -O main.dol "https://dl.sonichotspot.ir/eggmanland/ssasr/main.dol"
 
     - name: Commit main.dol
       run: |
