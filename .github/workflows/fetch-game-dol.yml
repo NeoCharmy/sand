@@ -1,4 +1,4 @@
-name: Split main.dol with ppcdis
+name: Split main.dol with ppcdis (build from source)
 
 on:
   workflow_dispatch:
@@ -10,26 +10,31 @@ jobs:
   split:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
+    - name: Checkout your repository
       uses: actions/checkout@v4
 
-    - name: Download ppcdis (v0.4.3)
+    - name: Install Rust (if not already present)
+      run: rustup update stable
+
+    - name: Clone and build ppcdis
       run: |
-        wget -nv -O ppcdis.zip https://github.com/SeekyCt/ppcdis/releases/download/v0.4.3/ppcdis-linux-x86_64.zip
-        unzip ppcdis.zip
-        chmod +x ppcdis
+        git clone --depth 1 https://github.com/SeekyCt/ppcdis.git
+        cd ppcdis
+        cargo build --release
+        cp target/release/ppcdis ../
+        cd ..
+        rm -rf ppcdis
 
     - name: Run ppcdis split
-      run: |
-        ./ppcdis split main.dol --out src
+      run: ./ppcdis split main.dol --out src
 
-    - name: Clean up ppcdis
-      run: rm -f ppcdis ppcdis.zip
+    - name: Clean up
+      run: rm ./ppcdis
 
     - name: Commit generated project files
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add src/
-        git commit -m "Initial split of main.dol with ppcdis" || echo "Nothing to commit"
+        git commit -m "Initial split of main.dol with ppcdis (built from source)" || echo "Nothing to commit"
         git push
