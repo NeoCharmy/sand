@@ -1,4 +1,4 @@
-name: Split main.dol with ppcdis (Python)
+name: Split main.dol with ppcdis (final)
 
 on:
   workflow_dispatch:
@@ -25,12 +25,20 @@ jobs:
         pip install -e .
         cd ..
 
-    - name: Verify ppcdis is installed
-      run: python -m ppcdis --help
-
-    - name: Run ppcdis split (using python module)
+    - name: Find ppcdis entry point and run split
       run: |
-        python -m ppcdis split main.dol --out src
+        # The entry point is likely ppcdis/cli.py or ppcdis/__init__.py
+        # We'll try common patterns and pick the first one that works.
+        if [ -f "ppcdis/cli.py" ]; then
+          python -m ppcdis.cli split main.dol --out src
+        elif [ -f "ppcdis/__init__.py" ]; then
+          # Check if there is a function called main in __init__.py
+          python -c "import ppcdis; ppcdis.main()" 2>/dev/null && python -c "import ppcdis; ppcdis.main()" -- split main.dol --out src
+        else
+          echo "Could not find entry point, listing ppcdis directory:"
+          ls ppcdis/
+          exit 1
+        fi
 
     - name: Commit generated project
       run: |
