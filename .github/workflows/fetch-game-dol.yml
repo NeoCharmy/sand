@@ -1,4 +1,4 @@
-name: Decode main.dol from base64
+name: Split main.dol with ppcdis
 
 on:
   workflow_dispatch:
@@ -7,21 +7,32 @@ permissions:
   contents: write
 
 jobs:
-  decode:
+  split:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Decode base64 to binary
+    - name: Download ppcdis
       run: |
-        base64 -d main.dol.b64 > main.dol
-        rm main.dol.b64
+        wget -nv -O ppcdis.zip https://github.com/SeekyCt/ppcdis/releases/latest/download/ppcdis-linux-x86_64.zip
+        unzip ppcdis.zip
+        chmod +x ppcdis
 
-    - name: Commit main.dol
+    - name: Run ppcdis split
+      run: |
+        ./ppcdis split main.dol --out src
+        # If the tool supports just `ppcdis split main.dol` without --out, try:
+        # ./ppcdis split main.dol
+        # But we'll keep the full form for safety.
+
+    - name: Clean up ppcdis binary
+      run: rm ppcdis ppcdis.zip
+
+    - name: Commit generated project files
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add main.dol
-        git commit -m "Add game executable (decoded from base64)" || echo "Nothing to commit"
+        git add src/
+        git commit -m "Initial split of main.dol with ppcdis" || echo "Nothing to commit"
         git push
