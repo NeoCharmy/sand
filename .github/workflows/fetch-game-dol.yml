@@ -19,66 +19,37 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies for ppcdis
+      - name: Install Python dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build
           pip install sortedcontainers
 
-      - name: Clone ppcdis (source only, no release download)
+      - name: Clone ppcdis
         run: |
           git clone https://github.com/SeekyCt/ppcdis.git
           cd ppcdis
           git submodule update --init --recursive
 
-      - name: Build ppcdis
+      - name: Run ppcdis analysis
         run: |
           cd ppcdis
-          mkdir build && cd build
-          cmake -G Ninja ..
-          ninja
-
-      - name: Run ppcdis disassembler on main.dol
-        run: |
-          mkdir recomp_output
-          cd ppcdis
-          # Generate C++ code from main.dol
-          ./build/ppcdis --dol ../main.dol --output ../recomp_output --cpp
-
-      - name: Try to isolate menu related files
+          # Use the Python module directly - no CMake build needed
+          python -m ppcdis.disassembler --dol ../main.dol --output ../recomp_output
+        
+      - name: Extract menu related files
         run: |
           mkdir menu_isolated
-          # Search for common menu strings in the generated C++ files
-          grep -l -i "menu\|option\|start\|select\|press start" recomp_output/*.cpp > menu_files.txt
-          # Copy those files into menu_isolated folder
+          grep -l -i "menu\|option\|start\|select\|press start" recomp_output/*.cpp > menu_files.txt 2>/dev/null || true
           if [ -s menu_files.txt ]; then
             while IFS= read -r file; do
               cp "$file" menu_isolated/
             done < menu_files.txt
             cp recomp_output/*.h menu_isolated/ 2>/dev/null || true
-          else
-            echo "No explicit menu files found by grep. Copying all .cpp files as fallback."
-            cp recomp_output/*.cpp menu_isolated/ 2>/dev/null || true
-            cp recomp_output/*.h menu_isolated/ 2>/dev/null || true
           fi
 
-      - name: Create a summary report
-        run: |
-          echo "## Recompilation summary" > summary.md
-          echo "- main.dol processed by ppcdis" >> summary.md
-          echo "- Generated C++ files in 'recomp_output'" >> summary.md
-          echo "- Isolated menu-related files in 'menu_isolated'" >> summary.md
-          echo "" >> summary.md
-          echo "### Next steps for Dreamcast port" >> summary.md
-          echo "1. Study the isolated menu C++ code." >> summary.md
-          echo "2. Replace Wii graphics calls (GX) with Dreamcast PVR calls." >> summary.md
-          echo "3. Adapt input, file loading, and memory management." >> summary.md
-
-      - name: Upload artifacts (menu recomp output)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: menu_recomp_output
           path: |
             menu_isolated/
-            summary.md
-            recomp_output/  # full recomp output in case you need it
+            recomp_output/
