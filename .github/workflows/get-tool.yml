@@ -1,4 +1,4 @@
-name: Download USA Demo from Torrent
+name: Download Complete Demo via FunKiiU
 
 on:
   workflow_dispatch:
@@ -7,63 +7,41 @@ permissions:
   contents: write
 
 jobs:
-  download-and-split:
+  download:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install aria2
-      run: sudo apt-get update -q && sudo apt-get install -y -q aria2
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
 
-    - name: Decode torrent.b64 to binary torrent
-      run: base64 -d torrent.b64 > demo.torrent
-
-    - name: Find index of USA demo
-      id: find_index
+    - name: Clone and setup FunKiiU
       run: |
-        aria2c --show-files demo.torrent > torrent_files.txt
-        cat torrent_files.txt
-        # Look for the exact filename: "Sonic & All-Stars Racing Transformed (USA) (Demo).zip"
-        INDEX=$(grep -F "Sonic & All-Stars Racing Transformed (USA) (Demo).zip" torrent_files.txt | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
-        if [ -z "$INDEX" ]; then
-          echo "USA demo file not found!"
-          exit 1
-        fi
-        echo "Index: $INDEX"
-        echo "index=$INDEX" >> $GITHUB_OUTPUT
+        git clone --depth 1 https://github.com/weidaidai/FunKiiU.git
+        cd FunKiiU
+        # No pip install needed, the script runs directly
+        cd ..
 
-    - name: Download only the USA demo
+    - name: Run FunKiiU to download the USA demo
       run: |
-        aria2c --select-file=${{ steps.find_index.outputs.index }} \
-               --seed-time=0 --max-connection-per-server=16 --split=16 \
-               --dir=download demo.torrent
+        cd FunKiiU
+        # The title ID for the USA demo can be used here
+        python FunKiiU.py -title 00050000101C0000 -key <title key>
+        cd ..
 
-    - name: Locate downloaded zip
-      id: locate
+    - name: Package downloaded files
       run: |
-        ZIPFILE=$(find download -type f -name "*USA*Demo*.zip" | head -1)
-        if [ -z "$ZIPFILE" ]; then
-          echo "No USA demo zip found!"
-          ls -R download/
-          exit 1
-        fi
-        echo "Found: $ZIPFILE"
-        ls -lh "$ZIPFILE"
-        echo "zipfile=$ZIPFILE" >> $GITHUB_OUTPUT
+        zip -r demo-complete.zip FunKiiU/
+        split -b 90M demo-complete.zip demo-complete.zip.part
+        rm demo-complete.zip
 
-    - name: Split zip into 90 MB chunks
-      run: |
-        ZIPFILE="${{ steps.locate.outputs.zipfile }}"
-        split -b 90M "$ZIPFILE" demo-usa.zip.part
-        echo "Generated parts:"
-        ls -lh demo-usa.zip.part*
-        rm "$ZIPFILE"
-
-    - name: Commit parts
+    - name: Commit the split parts
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add demo-usa.zip.part*
-        git commit -m "Add USA demo (split parts)" || echo "Nothing to commit"
+        git add demo-complete.zip.part*
+        git commit -m "Add complete Wii U demo (with ticket)" || echo "Nothing to commit"
         git push
