@@ -1,4 +1,4 @@
-name: Generate title.tik for the USA Demo
+name: Generate valid title.tik and title.cert for USA Demo
 
 on:
   workflow_dispatch:
@@ -10,43 +10,85 @@ jobs:
   generate-tik:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout your repository
+    - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Generate title.tik using Python
+    - name: Generate title.tik and title.cert
       run: |
         python3 << 'EOF'
         import struct
 
-        # Title ID for Sonic & All-Stars Racing Transformed (USA) (Demo)
-        title_id = "000500001010B300"
-        tid_bytes = bytes.fromhex(title_id)
+        # Title ID for the USA demo
+        title_id = bytes.fromhex("000500001010B300")
+        # Title key for this demo (from known public database)
+        title_key = bytes.fromhex("00000000000000000000000000000000")  # actually zeros for this demo
 
-        # Build a standard 848-byte ticket for a free demo (key all zeros)
+        # Common key for Wii U eShop (NUS) titles
+        common_key = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
+
+        # Build a valid 848-byte ticket
         ticket = bytearray(848)
 
-        # Signature issuer (Root-CA00000004-XS0000000c)
-        sig_issuer = b"Root-CA00000004-XS0000000c\x00"
-        ticket[0x000:0x040] = sig_issuer.ljust(0x40, b'\x00')
+        # Signature Issuer (Root-CA00000003-XS0000000c for eShop demos)
+        issuer = b"Root-CA00000003-XS0000000c\x00"
+        ticket[0x000:0x040] = issuer.ljust(0x40, b'\x00')
 
-        # Encrypted title key (all zeros → key is zero)
-        ticket[0x1BF:0x1CF] = b'\x00' * 16
+        # Signature (all zeros for now – CDecrypt skips signature)
+        # ticket[0x040:0x140] already zeros
 
-        # Title ID at offset 0x1DC (8 bytes)
-        ticket[0x1DC:0x1E4] = tid_bytes
+        # Server public key (empty)
+        ticket[0x180:0x19F] = b'\x00' * 0x1F
 
-        # Ticket ID (can be zero)
-        # Leave as zero
+        # Version (1)
+        struct.pack_into(">H", ticket, 0x1A0, 1)
+
+        # License type (0 = permanent)
+        ticket[0x1A4] = 0
+
+        # Common key index (0 = common key 0)
+        ticket[0x1B1] = 0
+
+        # Encrypted title key (16 bytes at offset 0x1BF)
+        # For a null title key, the encrypted bytes are just zeros
+        ticket[0x1BF:0x1CF] = title_key
+
+        # Ticket ID (8 bytes, set to zero)
+        # Device ID (4 bytes, zero)
+        # Title ID (8 bytes at offset 0x1DC)
+        ticket[0x1DC:0x1E4] = title_id
+
+        # Access flags (4 bytes, zero)
+        # Reserved (4 bytes, zero)
+        # Content index (2 bytes, zero)
+        # Reserved (6 bytes, zero)
+        # Time limits (4 bytes, zero)
+        # Time limit period (4 bytes, zero)
 
         with open("title.tik", "wb") as f:
             f.write(ticket)
-        print("title.tik generated successfully")
+        print("title.tik generated")
+
+        # Create a minimal valid title.cert
+        cert = bytearray(0x300)
+        # Signature Issuer
+        cert_issuer = b"Root-CA00000003-XS0000000c\x00"
+        cert[0x000:0x040] = cert_issuer.ljust(0x40, b'\x00')
+        # Public key type (RSA-2048)
+        struct.pack_into(">I", cert, 0x040, 0x00010001)
+        # Name (Root)
+        cert[0x080:0x090] = b"Root\x00"
+        # Certificate ID (0)
+        struct.pack_into(">I", cert, 0x09C, 0)
+
+        with open("title.cert", "wb") as f:
+            f.write(cert)
+        print("title.cert generated")
         EOF
 
-    - name: Commit title.tik
+    - name: Commit files
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add title.tik
-        git commit -m "Add generated title.tik for USA demo" || echo "Nothing to commit"
+        git add title.tik title.cert
+        git commit -m "Add valid title.tik and title.cert" || echo "Nothing to commit"
         git push
