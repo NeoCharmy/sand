@@ -1,4 +1,4 @@
-name: Generate title.tik for the demo
+name: Generate title.tik using uShop
 
 on:
   workflow_dispatch:
@@ -13,30 +13,36 @@ jobs:
     - name: Checkout your repository
       uses: actions/checkout@v4
 
-    - name: Setup Java (required by uShop)
-      uses: actions/setup-java@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
       with:
-        distribution: 'temurin'
-        java-version: '17'
+        python-version: '3.11'
 
-    - name: Clone and run uShop
+    - name: Install pycryptodome
+      run: pip install pycryptodome
+
+    - name: Clone uShop
       run: |
-        git clone --depth 1 https://github.com/MillaBasset/uShop.git
+        git clone --depth 1 https://github.com/SashLilac/uShop.git
         cd uShop
-        # Copy your CDN files into the input directory expected by uShop
-        mkdir -p input
-        cp ../*.app ../*.h3 ../*.tmd ../*.cert input/ 2>/dev/null || true
-        cp ../tmd.0 input/title.tmd 2>/dev/null || true
-        # Run uShop to generate the ticket
-        java -jar uShop.jar -ticket input
-        # The generated title.tik will now be in the input folder
-        cp input/title.tik ../title.tik 2>/dev/null || true
+        # Verify the main script exists
+        test -f ushop.py || (echo "ushop.py not found!" && exit 1)
         cd ..
+
+    - name: Run uShop to generate ticket
+      run: |
+        # The demo title ID for Sonic & All-Stars Racing Transformed (USA)
+        # Demos are free content, so the ticket is publicly available
+        cd uShop
+        python ushop.py 000500001010b300
+        cd ..
+        # The generated ticket will be in the uShop directory
+        find uShop -name "title.tik" -exec cp {} ./title.tik \;
 
     - name: Commit the generated title.tik
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add title.tik
-        git commit -m "Add generated title.tik for demo" || echo "Nothing to commit"
+        git commit -m "Add generated title.tik for the demo" || echo "Nothing to commit"
         git push
