@@ -1,4 +1,4 @@
-name: Download Complete Demo via FunKiiU
+name: Generate title.tik for the demo
 
 on:
   workflow_dispatch:
@@ -7,41 +7,36 @@ permissions:
   contents: write
 
 jobs:
-  download:
+  generate-tik:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
+    - name: Checkout your repository
       uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
+    - name: Setup Java (required by uShop)
+      uses: actions/setup-java@v4
       with:
-        python-version: '3.11'
+        distribution: 'temurin'
+        java-version: '17'
 
-    - name: Clone and setup FunKiiU
+    - name: Clone and run uShop
       run: |
-        git clone --depth 1 https://github.com/weidaidai/FunKiiU.git
-        cd FunKiiU
-        # No pip install needed, the script runs directly
+        git clone --depth 1 https://github.com/MillaBasset/uShop.git
+        cd uShop
+        # Copy your CDN files into the input directory expected by uShop
+        mkdir -p input
+        cp ../*.app ../*.h3 ../*.tmd ../*.cert input/ 2>/dev/null || true
+        cp ../tmd.0 input/title.tmd 2>/dev/null || true
+        # Run uShop to generate the ticket
+        java -jar uShop.jar -ticket input
+        # The generated title.tik will now be in the input folder
+        cp input/title.tik ../title.tik 2>/dev/null || true
         cd ..
 
-    - name: Run FunKiiU to download the USA demo
-      run: |
-        cd FunKiiU
-        # The title ID for the USA demo can be used here
-        python FunKiiU.py -title 00050000101C0000 -key <title key>
-        cd ..
-
-    - name: Package downloaded files
-      run: |
-        zip -r demo-complete.zip FunKiiU/
-        split -b 90M demo-complete.zip demo-complete.zip.part
-        rm demo-complete.zip
-
-    - name: Commit the split parts
+    - name: Commit the generated title.tik
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add demo-complete.zip.part*
-        git commit -m "Add complete Wii U demo (with ticket)" || echo "Nothing to commit"
+        git add title.tik
+        git commit -m "Add generated title.tik for demo" || echo "Nothing to commit"
         git push
