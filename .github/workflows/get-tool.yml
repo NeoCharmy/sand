@@ -1,0 +1,32 @@
+name: Get CDecrypt Windows binary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download CDecrypt release zip
+      run: |
+        # Direct link to the Windows binary from the latest release
+        wget -q -O cdecrypt.zip https://github.com/VitaSmith/cdecrypt/releases/latest/download/cdecrypt-v4.7-win-x64.zip
+
+    - name: Extract only the .exe
+      run: |
+        unzip -j cdecrypt.zip "*.exe" -d .
+        rm cdecrypt.zip
+
+    - name: Commit CDecrypt.exe
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add CDecrypt.exe
+        git commit -m "Add CDecrypt Windows binary" || echo "Nothing to commit"
+        git push
