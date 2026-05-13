@@ -1,0 +1,74 @@
+name: Download Sonic Racing Demo from Torrent
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download torrent file from external host
+        run: |
+          curl -L -o original.torrent "https://dl.sonichotspot.ir/eggmanland/original.torrent"
+
+      - name: Install aria2
+        run: sudo apt-get update && sudo apt-get install -y aria2
+
+      - name: List all files and find Sonic demo index
+        id: find_demo
+        run: |
+          aria2c --show-files original.torrent > filelist.txt
+          cat filelist.txt
+          # The file name ends with .zip (NOT .zipe)
+          LINE=$(grep -i "Sonic.*All-Stars.*Racing.*Transformed.*Demo.*\.zip" filelist.txt | head -1)
+          if [ -z "$LINE" ]; then
+            echo "Sonic demo not found"
+            exit 1
+          fi
+          INDEX=$(echo "$LINE" | awk '{print $1}' | tr -d '()')
+          ZERO_BASED=$((INDEX - 1))
+          echo "index=$ZERO_BASED" >> $GITHUB_OUTPUT
+
+      - name: Download only the Sonic demo (.zip)
+        run: |
+          mkdir -p output
+          aria2c --seed-time=0 --select-file=${{ steps.find_demo.outputs.index }} -d output original.torrent
+          # The downloaded file will have its original name, ending with .zip
+
+      - name: Split the ZIP into 50MB chunks
+        run: |
+          mkdir -p chunks
+          # Find the .zip file (there should be exactly one)
+          zip_file=$(find output -name "*.zip" | head -1)
+          if [ -z "$zip_file" ]; then
+            echo "No .zip file found"
+            exit 1
+          fi
+          cp "$zip_file" chunks/
+          cd chunks
+          zip_name=$(basename "$zip_file")
+          split -b 50M "$zip_name" "${zip_name}.part"
+          rm "$zip_name"
+          ls -1 "${zip_name}.part"* > manifest.txt
+          echo "Original file: $zip_name" >> manifest.txt
+          cd ..
+
+      - name: Commit and push chunks
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add chunks/
+          if ! git diff --staged --quiet; then
+            git commit -m "Add Sonic Racing Demo (split into 50MB parts)"
+            git push
+          else
+            echo "No changes to commit"
+          end
