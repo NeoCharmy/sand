@@ -1,4 +1,4 @@
-name: Get CDecrypt Release Zip
+name: Download USA Demo from Embedded Torrent
 
 on:
   workflow_dispatch:
@@ -7,20 +7,65 @@ permissions:
   contents: write
 
 jobs:
-  fetch:
+  download-and-split:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Download CDecrypt release zip
-      run: |
-        wget -q -O cdecrypt.zip "https://github.com/VitaSmith/cdecrypt/releases/download/v4.8/cdecrypt.zip"
+    - name: Install aria2
+      run: sudo apt-get update -q && sudo apt-get install -y -q aria2
 
-    - name: Commit cdecrypt.zip
+    - name: Decode torrent.b64 to binary torrent
+      run: |
+        base64 -d torrent.b64 > demo.torrent
+        # Don't delete torrent.b64 here – we may need it again later
+        # It stays in the repo for future runs.
+
+    - name: Find the index of the USA demo zip
+      id: find_index
+      run: |
+        FILE_LIST=$(aria2c --show-files demo.torrent 2>&1)
+        echo "$FILE_LIST"
+        INDEX=$(echo "$FILE_LIST" | grep -i "Sonic & All-Stars Racing Transformed.*USA.*Demo\.zip" | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
+        if [ -z "$INDEX" ]; then
+          echo "Could not find USA demo file in torrent!"
+          exit 1
+        fi
+        echo "Found USA demo file at index: $INDEX"
+        echo "index=$INDEX" >> $GITHUB_OUTPUT
+
+    - name: Download only the USA demo file
+      run: |
+        aria2c --select-file=${{ steps.find_index.outputs.index }} \
+               --seed-time=0 --max-connection-per-server=16 --split=16 \
+               --dir=download demo.torrent
+
+    - name: Locate the downloaded USA demo zip
+      id: locate
+      run: |
+        ZIPFILE=$(find download -type f -name "*USA*Demo*.zip" | head -1)
+        if [ -z "$ZIPFILE" ]; then
+          echo "No USA demo zip found!"
+          ls -R download/
+          exit 1
+        fi
+        echo "Found: $ZIPFILE"
+        ls -lh "$ZIPFILE"
+        echo "zipfile=$ZIPFILE" >> $GITHUB_OUTPUT
+
+    - name: Split zip into 90 MB chunks
+      run: |
+        ZIPFILE="${{ steps.locate.outputs.zipfile }}"
+        split -b 90M "$ZIPFILE" demo-usa.zip.part
+        echo "Generated parts:"
+        ls -lh demo-usa.zip.part*
+        rm "$ZIPFILE"
+
+    - name: Commit all parts
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add cdecrypt.zip
-        git commit -m "Add CDecrypt release zip" || echo "Nothing to commit"
+        git add demo-usa.zip.part*
+        git commit -m "Add USA demo (split parts)" || echo "Nothing to commit"
         git push
