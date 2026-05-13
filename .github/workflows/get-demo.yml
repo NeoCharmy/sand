@@ -1,4 +1,4 @@
-name: Download Sonic Racing Demo from Torrent
+name: Download and Split Sonic Racing Transformed Demo (single file only)
 
 on:
   workflow_dispatch:
@@ -7,89 +7,63 @@ permissions:
   contents: write
 
 jobs:
-  download:
+  download-and-split:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Download torrent file from Iranian host (multiple attempts)
-        id: download_torrent
-        run: |
-          TORRENT_URL="https://dl.sonichotspot.ir/eggmanland/original.torrent"
-          HTTP_URL="http://dl.sonichotspot.ir/eggmanland/original.torrent"
-          
-          echo "Attempt 1: curl with HTTPS and insecure"
-          curl -Lk --retry 5 --retry-delay 2 --max-time 30 -o original.torrent "$TORRENT_URL" && ls -la original.torrent && test -s original.torrent && exit 0
-          
-          echo "Attempt 2: curl with HTTP (no SSL)"
-          curl -L --retry 5 --retry-delay 2 --max-time 30 -o original.torrent "$HTTP_URL" && ls -la original.torrent && test -s original.torrent && exit 0
-          
-          echo "Attempt 3: wget with HTTPS insecure"
-          wget --no-check-certificate --timeout=30 --tries=5 -O original.torrent "$TORRENT_URL" && ls -la original.torrent && test -s original.torrent && exit 0
-          
-          echo "Attempt 4: wget with HTTP"
-          wget --timeout=30 --tries=5 -O original.torrent "$HTTP_URL" && ls -la original.torrent && test -s original.torrent && exit 0
-          
-          echo "All attempts failed. Cannot reach the host."
+    - name: Install aria2
+      run: sudo apt-get update -q && sudo apt-get install -y -q aria2
+
+    - name: Download .torrent file
+      run: |
+        wget -q -O demo.torrent "https://dl.sonichotspot.ir/eggmanland/original.torrent"
+
+    - name: Find the index of the demo zip inside the torrent
+      id: find_index
+      run: |
+        # List all files in the torrent
+        FILE_LIST=$(aria2c --show-files demo.torrent 2>&1)
+        echo "$FILE_LIST"
+        # Look for the line containing the exact demo zip name
+        # Example output lines:
+        #   |> 1| |4.3GiB| |.../Sonic & All-Stars Racing Transformed (Europe) (Demo).zip
+        INDEX=$(echo "$FILE_LIST" | grep -i "Sonic & All-Stars Racing Transformed (Europe) (Demo).zip" | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
+        if [ -z "$INDEX" ]; then
+          echo "Could not find the demo file in torrent!"
           exit 1
+        fi
+        echo "Found demo file at index: $INDEX"
+        echo "index=$INDEX" >> $GITHUB_OUTPUT
 
-      - name: Install aria2
-        run: sudo apt-get update && sudo apt-get install -y aria2
+    - name: Download only the selected file from the torrent
+      run: |
+        aria2c --select-file=${{ steps.find_index.outputs.index }} \
+               --seed-time=0 --max-connection-per-server=16 --split=16 \
+               --dir=download demo.torrent
 
-      - name: List files and find Sonic demo index
-        id: find_demo
-        run: |
-          aria2c --show-files original.torrent > filelist.txt
-          cat filelist.txt
-          LINE=$(grep -i "Sonic.*All-Stars.*Racing.*Transformed.*Demo.*\.zip" filelist.txt | head -1)
-          if [ -z "$LINE" ]; then
-            echo "Sonic demo not found"
-            exit 1
-          fi
-          INDEX=$(echo "$LINE" | awk '{print $1}' | tr -d '()')
-          ZERO_BASED=$((INDEX - 1))
-          echo "index=$ZERO_BASED" >> $GITHUB_OUTPUT
-          echo "Found at index $INDEX (0‑based: $ZERO_BASED)"
+    - name: Locate the downloaded zip
+      id: locate
+      run: |
+        ZIPFILE=$(find download -type f -name "*.zip" | head -1)
+        if [ -z "$ZIPFILE" ]; then
+          echo "No zip file found!"
+          exit 1
+        fi
+        echo "Found: $ZIPFILE"
+        echo "zipfile=$ZIPFILE" >> $GITHUB_OUTPUT
 
-      - name: Download only the Sonic demo file
-        run: |
-          mkdir -p output
-          aria2c --seed-time=0 --select-file=${{ steps.find_demo.outputs.index }} -d output original.torrent
+    - name: Split zip into 90 MB chunks
+      run: |
+        ZIPFILE="${{ steps.locate.outputs.zipfile }}"
+        split -b 90M "$ZIPFILE" demo.zip.part
+        rm "$ZIPFILE"
 
-      - name: Locate downloaded .zip file
-        run: |
-          ZIP_FILE=$(find output -name "*.zip" | head -1)
-          if [ -z "$ZIP_FILE" ]; then
-            echo "No .zip file found"
-            exit 1
-          fi
-          echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
-          echo "Downloaded: $ZIP_FILE ($(stat -c %s $ZIP_FILE) bytes)"
-
-      - name: Split ZIP into 50MB chunks
-        run: |
-          mkdir -p chunks
-          cp "${{ env.ZIP_FILE }}" chunks/
-          cd chunks
-          ZIP_NAME=$(basename "${{ env.ZIP_FILE }}")
-          split -b 50M "$ZIP_NAME" "${ZIP_NAME}.part"
-          rm "$ZIP_NAME"
-          ls -1 "${ZIP_NAME}.part"* > manifest.txt
-          echo "Original file: $ZIP_NAME" >> manifest.txt
-          echo "Total parts: $(ls -1 "${ZIP_NAME}.part"* | wc -l)" >> manifest.txt
-          cd ..
-
-      - name: Commit and push chunks to repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add chunks/
-          if ! git diff --staged --quiet; then
-            git commit -m "Add Sonic Racing Demo (split into 50MB parts)"
-            git push
-          else
-            echo "No changes to commit"
-          fi
+    - name: Commit all parts
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add demo.zip.part*
+        git commit -m "Add Sonic Racing Transformed demo (split parts)" || echo "Nothing to commit"
+        git push
