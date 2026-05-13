@@ -1,4 +1,4 @@
-name: Download Demo from Embedded Torrent
+name: Download Demo from Embedded Torrent (with debug)
 
 on:
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
                --seed-time=0 --max-connection-per-server=16 --split=16 \
                --dir=download demo.torrent
 
-    - name: Locate the downloaded zip
+    - name: Locate the downloaded zip and show its size
       id: locate
       run: |
         ZIPFILE=$(find download -type f -name "*.zip" | head -1)
@@ -49,12 +49,15 @@ jobs:
           exit 1
         fi
         echo "Found: $ZIPFILE"
+        ls -lh "$ZIPFILE"
         echo "zipfile=$ZIPFILE" >> $GITHUB_OUTPUT
 
-    - name: Split zip into 90 MB chunks
+    - name: Split zip into 90 MB chunks (and list parts)
       run: |
         ZIPFILE="${{ steps.locate.outputs.zipfile }}"
         split -b 90M "$ZIPFILE" demo.zip.part
+        echo "Generated parts:"
+        ls -lh demo.zip.part*
         rm "$ZIPFILE"
 
     - name: Commit all parts
