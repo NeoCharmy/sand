@@ -1,4 +1,4 @@
-name: Download Demo from Embedded Torrent (with debug)
+name: Download Demo from Embedded Torrent (Fixed Find)
 
 on:
   workflow_dispatch:
@@ -40,19 +40,21 @@ jobs:
                --seed-time=0 --max-connection-per-server=16 --split=16 \
                --dir=download demo.torrent
 
-    - name: Locate the downloaded zip and show its size
+    - name: Locate the downloaded DEMO zip (not the update)
       id: locate
       run: |
-        ZIPFILE=$(find download -type f -name "*.zip" | head -1)
+        # Search specifically for the file containing "(Demo)" to avoid the update zip
+        ZIPFILE=$(find download -type f -name "*Demo*.zip" | head -1)
         if [ -z "$ZIPFILE" ]; then
-          echo "No zip file found!"
+          echo "No demo zip found!"
+          ls -R download/
           exit 1
         fi
-        echo "Found: $ZIPFILE"
+        echo "Found demo: $ZIPFILE"
         ls -lh "$ZIPFILE"
         echo "zipfile=$ZIPFILE" >> $GITHUB_OUTPUT
 
-    - name: Split zip into 90 MB chunks (and list parts)
+    - name: Split zip into 90 MB chunks
       run: |
         ZIPFILE="${{ steps.locate.outputs.zipfile }}"
         split -b 90M "$ZIPFILE" demo.zip.part
