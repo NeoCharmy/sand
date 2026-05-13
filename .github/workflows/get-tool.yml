@@ -27,7 +27,7 @@ jobs:
       run: |
         FILE_LIST=$(aria2c --show-files demo.torrent 2>&1)
         echo "$FILE_LIST"
-        INDEX=$(echo "$FILE_LIST" | grep -i "Sonic & All-Stars Racing Transformed.*USA.*Demo\.zip" | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
+        INDEX=$(echo "$FILE_LIST" | grep -i "Sonic & All-Stars Racing Transformed .*USA.*Demo\.zip" | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
         if [ -z "$INDEX" ]; then
           echo "Could not find USA demo file in torrent!"
           exit 1
