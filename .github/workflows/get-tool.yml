@@ -1,4 +1,4 @@
-name: Get CDecrypt Windows binary
+name: Get CDecrypt Release Zip
 
 on:
   workflow_dispatch:
@@ -13,19 +13,14 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Download CDecrypt (confirmed URL)
+    - name: Download CDecrypt release zip
       run: |
         wget -q -O cdecrypt.zip "https://github.com/VitaSmith/cdecrypt/releases/download/v4.8/cdecrypt.zip"
 
-    - name: Extract CDecrypt.exe
-      run: |
-        unzip -j cdecrypt.zip "*.exe" -d .
-        rm cdecrypt.zip
-
-    - name: Commit CDecrypt.exe
+    - name: Commit cdecrypt.zip
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add CDecrypt.exe
-        git commit -m "Add CDecrypt Windows binary" || echo "Nothing to commit"
+        git add cdecrypt.zip
+        git commit -m "Add CDecrypt release zip" || echo "Nothing to commit"
         git push
