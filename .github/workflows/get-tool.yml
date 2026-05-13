@@ -1,4 +1,4 @@
-name: Download USA Demo from Embedded Torrent
+name: Download USA Demo from Torrent
 
 on:
   workflow_dispatch:
@@ -17,31 +17,29 @@ jobs:
       run: sudo apt-get update -q && sudo apt-get install -y -q aria2
 
     - name: Decode torrent.b64 to binary torrent
-      run: |
-        base64 -d torrent.b64 > demo.torrent
-        # Don't delete torrent.b64 here – we may need it again later
-        # It stays in the repo for future runs.
+      run: base64 -d torrent.b64 > demo.torrent
 
-    - name: Find the index of the USA demo zip
+    - name: Find index of USA demo
       id: find_index
       run: |
-        FILE_LIST=$(aria2c --show-files demo.torrent 2>&1)
-        echo "$FILE_LIST"
-        INDEX=$(echo "$FILE_LIST" | grep -i "Sonic & All-Stars Racing Transformed .*USA.*Demo\.zip" | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
+        aria2c --show-files demo.torrent > torrent_files.txt
+        cat torrent_files.txt
+        # Look for the exact filename: "Sonic & All-Stars Racing Transformed (USA) (Demo).zip"
+        INDEX=$(grep -F "Sonic & All-Stars Racing Transformed (USA) (Demo).zip" torrent_files.txt | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
         if [ -z "$INDEX" ]; then
-          echo "Could not find USA demo file in torrent!"
+          echo "USA demo file not found!"
           exit 1
         fi
-        echo "Found USA demo file at index: $INDEX"
+        echo "Index: $INDEX"
         echo "index=$INDEX" >> $GITHUB_OUTPUT
 
-    - name: Download only the USA demo file
+    - name: Download only the USA demo
       run: |
         aria2c --select-file=${{ steps.find_index.outputs.index }} \
                --seed-time=0 --max-connection-per-server=16 --split=16 \
                --dir=download demo.torrent
 
-    - name: Locate the downloaded USA demo zip
+    - name: Locate downloaded zip
       id: locate
       run: |
         ZIPFILE=$(find download -type f -name "*USA*Demo*.zip" | head -1)
@@ -62,7 +60,7 @@ jobs:
         ls -lh demo-usa.zip.part*
         rm "$ZIPFILE"
 
-    - name: Commit all parts
+    - name: Commit parts
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
