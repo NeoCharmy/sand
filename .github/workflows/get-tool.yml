@@ -1,4 +1,4 @@
-name: Generate title.tik using uShop
+name: Generate title.tik for the USA Demo
 
 on:
   workflow_dispatch:
@@ -13,36 +13,40 @@ jobs:
     - name: Checkout your repository
       uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install pycryptodome
-      run: pip install pycryptodome
-
-    - name: Clone uShop
+    - name: Generate title.tik using Python
       run: |
-        git clone --depth 1 https://github.com/SashLilac/uShop.git
-        cd uShop
-        # Verify the main script exists
-        test -f ushop.py || (echo "ushop.py not found!" && exit 1)
-        cd ..
+        python3 << 'EOF'
+        import struct
 
-    - name: Run uShop to generate ticket
-      run: |
-        # The demo title ID for Sonic & All-Stars Racing Transformed (USA)
-        # Demos are free content, so the ticket is publicly available
-        cd uShop
-        python ushop.py 000500001010b300
-        cd ..
-        # The generated ticket will be in the uShop directory
-        find uShop -name "title.tik" -exec cp {} ./title.tik \;
+        # Title ID for Sonic & All-Stars Racing Transformed (USA) (Demo)
+        title_id = "000500001010B300"
+        tid_bytes = bytes.fromhex(title_id)
 
-    - name: Commit the generated title.tik
+        # Build a standard 848-byte ticket for a free demo (key all zeros)
+        ticket = bytearray(848)
+
+        # Signature issuer (Root-CA00000004-XS0000000c)
+        sig_issuer = b"Root-CA00000004-XS0000000c\x00"
+        ticket[0x000:0x040] = sig_issuer.ljust(0x40, b'\x00')
+
+        # Encrypted title key (all zeros → key is zero)
+        ticket[0x1BF:0x1CF] = b'\x00' * 16
+
+        # Title ID at offset 0x1DC (8 bytes)
+        ticket[0x1DC:0x1E4] = tid_bytes
+
+        # Ticket ID (can be zero)
+        # Leave as zero
+
+        with open("title.tik", "wb") as f:
+            f.write(ticket)
+        print("title.tik generated successfully")
+        EOF
+
+    - name: Commit title.tik
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add title.tik
-        git commit -m "Add generated title.tik for the demo" || echo "Nothing to commit"
+        git commit -m "Add generated title.tik for USA demo" || echo "Nothing to commit"
         git push
