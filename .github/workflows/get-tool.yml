@@ -1,4 +1,4 @@
-name: Get CDecrypt Windows binary
+name: Get CDecrypt Windows binary (API)
 
 on:
   workflow_dispatch:
@@ -13,10 +13,21 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Download CDecrypt release zip
+    - name: Get CDecrypt asset URL
+      id: get_url
       run: |
-        # Direct link to the Windows binary from the latest release
-        wget -q -O cdecrypt.zip https://github.com/VitaSmith/cdecrypt/releases/latest/download/cdecrypt-v4.7-win-x64.zip
+        API_URL="https://api.github.com/repos/VitaSmith/cdecrypt/releases/latest"
+        ASSET_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" $API_URL | jq -r '.assets[] | select(.name | test("win.*\\.zip$")) | .browser_download_url')
+        if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
+          echo "API failed, falling back to known URL"
+          ASSET_URL="https://github.com/VitaSmith/cdecrypt/releases/download/v4.7/cdecrypt-v4.7-win-x64.zip"
+        fi
+        echo "Using asset URL: $ASSET_URL"
+        echo "asset_url=$ASSET_URL" >> $GITHUB_OUTPUT
+
+    - name: Download CDecrypt zip
+      run: |
+        wget -q -O cdecrypt.zip "${{ steps.get_url.outputs.asset_url }}"
 
     - name: Extract only the .exe
       run: |
