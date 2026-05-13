@@ -1,4 +1,4 @@
-name: Download and Split Sonic Racing Transformed Demo (single file only)
+name: Download Demo from Embedded Torrent
 
 on:
   workflow_dispatch:
@@ -16,19 +16,16 @@ jobs:
     - name: Install aria2
       run: sudo apt-get update -q && sudo apt-get install -y -q aria2
 
-    - name: Download .torrent file
+    - name: Decode torrent.b64 to binary torrent
       run: |
-        wget -q -O demo.torrent "https://dl.sonichotspot.ir/eggmanland/original.torrent"
+        base64 -d torrent.b64 > demo.torrent
+        rm torrent.b64
 
     - name: Find the index of the demo zip inside the torrent
       id: find_index
       run: |
-        # List all files in the torrent
         FILE_LIST=$(aria2c --show-files demo.torrent 2>&1)
         echo "$FILE_LIST"
-        # Look for the line containing the exact demo zip name
-        # Example output lines:
-        #   |> 1| |4.3GiB| |.../Sonic & All-Stars Racing Transformed (Europe) (Demo).zip
         INDEX=$(echo "$FILE_LIST" | grep -i "Sonic & All-Stars Racing Transformed (Europe) (Demo).zip" | head -1 | awk -F'|' '{print $1}' | tr -d ' |>')
         if [ -z "$INDEX" ]; then
           echo "Could not find the demo file in torrent!"
