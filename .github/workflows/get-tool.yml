@@ -13,7 +13,10 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Create title.tik and title.cert using Python
+    - name: Install Python cryptography library
+      run: pip install pycryptodome
+
+    - name: Create title.tik and title.cert
       run: |
         python3 -c '
 import struct
@@ -50,7 +53,7 @@ with open("title.cert", "wb") as f:
 print("title.cert created")
 '
 
-    - name: Commit files
+    - name: Commit the files
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
