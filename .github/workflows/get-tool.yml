@@ -1,53 +1,123 @@
-name: Get Demo Content List
+name: Decrypt Demo Content – Final
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  get-list:
+  decrypt:
     runs-on: ubuntu-latest
     steps:
-    - name: Fetch content IDs from title key database
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Reassemble split parts (if any)
       run: |
-        # Use a working title key API
-        curl -s "https://wiiu.titlekeys.com/v1/title/000500001010B300" -o api.json
-        if [ -f api.json ] && [ -s api.json ]; then
-          python3 -c "
-import json
-data = json.load(open('api.json'))
-content = data.get('content', [])
-if content:
-    for c in content:
-        print(f'{c[\"id\"]:08x}.app')
-else:
-    print('No content list in response')
-"
+        PARTAA=$(ls *.partaa 2>/dev/null | head -1)
+        if [ -n "$PARTAA" ]; then
+          PREFIX="${PARTAA%.partaa}"
+          echo "Reassembling $PREFIX ..."
+          cat ${PREFIX}.part* > demo-encrypted.zip
+          echo "Extracting..."
+          unzip -q demo-encrypted.zip -d encrypted_cdn
         else
-          # Fallback: try a different database format
-          curl -s "https://wiiu.titlekeys.gq/title/000500001010B300.json" -o api2.json
-          if [ -f api2.json ] && [ -s api2.json ]; then
-            python3 -c "
-import json
-data = json.load(open('api2.json'))
-content = data.get('content', [])
-for c in content:
-    print(f'{c[\"id\"]:08x}.app')
-"
-          else
-            echo "Both APIs failed. Checking offline database..."
-            # Use a well-known demo structure (manually verified)
-            echo "Known demo content files:"
-            echo "00000001.app"
-            echo "00000002.app"
-            echo "00000003.app"
-            echo "00000004.app"
-            echo "00000005.app"
-            echo "00000006.app"
-            echo "00000007.app"
-            echo "00000008.app"
-            echo "00000009.app"
-            echo "0000000a.app"
-            echo "0000000b.app"
-            echo "0000000c.app"
-          fi
+          echo "No split parts found – using files already in repository."
+          mkdir encrypted_cdn
+          # Copy any numeric files or .app files to encrypted_cdn
+          for f in *; do
+            if [[ -f "$f" && "$f" =~ ^[0-9a-f]{8}(\.app)?$ ]]; then
+              cp "$f" encrypted_cdn/
+            fi
+          done
         fi
+
+    - name: Gather content files for decryption
+      run: |
+        mkdir -p working
+        # Copy files with extensions .app and also numeric files with no extension
+        find encrypted_cdn -type f \( -name "*.app" -o ! -name "*.*" \) -exec cp {} working/ \;
+        echo "Files to decrypt:"
+        ls -l working/
+
+    - name: Install Python dependencies
+      run: pip install pycryptodome
+
+    - name: Clone Kii U Generator and generate title key
+      run: |
+        git clone --depth 1 https://github.com/dojafoja/Kii-U-Generator.git
+        cd Kii-U-Generator
+        echo '{"commonkey": "D7B00402659BA2ABD2CB0DB27FA2B656"}' > ckey.json
+        python3 keygen.py 000500001010B300 mypass | tee ../keylog.txt
+        cd ..
+
+    - name: Extract title key from log
+      id: getkey
+      run: |
+        KEY=$(grep -oP 'generated unencrypted key for .*? : \K[0-9a-fA-F]{32}' keylog.txt)
+        if [ -z "$KEY" ]; then
+          echo "Could not extract title key!"
+          cat keylog.txt
+          exit 1
+        fi
+        echo "Title key: $KEY"
+        echo "titlekey=$KEY" >> $GITHUB_OUTPUT
+
+    - name: Decrypt all content files
+      run: |
+        python3 << 'EOF'
+        import os, struct, re
+        from Crypto.Cipher import AES
+
+        TITLE_KEY = bytes.fromhex("${{ steps.getkey.outputs.titlekey }}")
+        WORK_DIR = "working"
+        OUT_DIR = "content_decrypted"
+        os.makedirs(OUT_DIR, exist_ok=True)
+
+        files = sorted(
+            [f for f in os.listdir(WORK_DIR) if re.match(r'^[0-9a-f]{8}(\.app)?$', f)]
+        )
+        print(f"Processing {len(files)} files...")
+
+        for idx, fname in enumerate(files):
+            with open(os.path.join(WORK_DIR, fname), "rb") as f:
+                data = f.read()
+            # Build IV: content index as big-endian 16-bit, padded with zeros
+            iv = struct.pack(">H", idx).ljust(16, b"\x00")
+            cipher = AES.new(TITLE_KEY, AES.MODE_CBC, iv)
+            decrypted = cipher.decrypt(data)
+            # Remove PKCS#7 padding
+            pad_len = decrypted[-1]
+            if 1 <= pad_len <= 16:
+                decrypted = decrypted[:-pad_len]
+            out_name = f"{int(fname[:8], 16):08x}.app"
+            with open(os.path.join(OUT_DIR, out_name), "wb") as f:
+                f.write(decrypted)
+            print(f"Decrypted {fname} -> {out_name} ({len(decrypted)} bytes)")
+        print("Decryption complete.")
+        EOF
+
+    - name: Package decrypted content and commit
+      run: |
+        mkdir -p "Sonic & All-Stars Racing Transformed (USA) (Demo)/content"
+        cp content_decrypted/* "Sonic & All-Stars Racing Transformed (USA) (Demo)/content/"
+        # Create minimal meta.xml
+        cat > "Sonic & All-Stars Racing Transformed (USA) (Demo)/meta.xml" << 'XMLEOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <menu type="complex" access="777">
+          <title_id type="hexBinary" length="8">000500001010B300</title_id>
+          <product_code type="string" length="32">WUP-P-AS2E</product_code>
+          <content_platform type="string" length="32">WUP</content_platform>
+          <company_code type="string" length="8">008P</company_code>
+          <region type="hexBinary" length="4">00000002</region>
+        </menu>
+        XMLEOF
+        zip -r demo-decrypted-content.zip "Sonic & All-Stars Racing Transformed (USA) (Demo)"
+        split -b 90M demo-decrypted-content.zip demo-decrypted-content.zip.part
+        rm demo-decrypted-content.zip
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add demo-decrypted-content.zip.part*
+        git commit -m "Add decrypted demo content (with generated title key)" || echo "Nothing to commit"
+        git push
