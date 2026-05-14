@@ -13,18 +13,17 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Generate title.tik and title.cert
+    - name: Create title.tik and title.cert using Python
       run: |
         python3 -c '
 import struct
 from Crypto.Cipher import AES
-import os
 
 TITLE_ID = bytes.fromhex("000500001010B300")
 COMMON_KEY = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
 TITLE_KEY = bytes(16)
 
-# --- title.tik ---
+# ----- Generate title.tik -----
 iv_title = TITLE_ID.ljust(16, b"\x00")
 cipher_enc = AES.new(COMMON_KEY, AES.MODE_CBC, iv_title)
 encrypted_title_key = cipher_enc.encrypt(TITLE_KEY)
@@ -36,28 +35,25 @@ struct.pack_into(">H", ticket, 0x1A0, 1)
 ticket[0x1B1] = 0
 ticket[0x1BF:0x1CF] = encrypted_title_key
 ticket[0x1DC:0x1E4] = TITLE_ID
+
 with open("title.tik", "wb") as f:
     f.write(ticket)
-print("title.tik generated")
+print("title.tik created")
 
-# --- title.cert (minimal) ---
+# ----- Generate minimal title.cert -----
 cert = bytearray(0x300)
 cert_issuer = b"Root-CA00000003-XS0000000c\x00"
 cert[0x000:0x040] = cert_issuer.ljust(0x40, b"\x00")
 struct.pack_into(">I", cert, 0x040, 0x00010001)
 with open("title.cert", "wb") as f:
     f.write(cert)
-print("title.cert generated")
+print("title.cert created")
 '
-      env:
-        PYTHONPATH: ""
-    - name: Install pycryptodome (if needed)
-      run: pip install pycryptodome
 
-    - name: Commit the two files
+    - name: Commit files
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add title.tik title.cert
-        git commit -m "Add valid title.tik and title.cert for USA demo" || echo "Nothing to commit"
+        git commit -m "Add generated title.tik and title.cert" || echo "Nothing to commit"
         git push
