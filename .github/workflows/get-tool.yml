@@ -1,4 +1,4 @@
-name: Decrypt Demo Content – Final
+name: Decrypt Demo Content – v2
 
 on:
   workflow_dispatch:
@@ -24,8 +24,7 @@ jobs:
           unzip -q demo-encrypted.zip -d encrypted_cdn
         else
           echo "No split parts found – using files already in repository."
-          mkdir encrypted_cdn
-          # Copy any numeric files or .app files to encrypted_cdn
+          mkdir -p encrypted_cdn
           for f in *; do
             if [[ -f "$f" && "$f" =~ ^[0-9a-f]{8}(\.app)?$ ]]; then
               cp "$f" encrypted_cdn/
@@ -36,7 +35,6 @@ jobs:
     - name: Gather content files for decryption
       run: |
         mkdir -p working
-        # Copy files with extensions .app and also numeric files with no extension
         find encrypted_cdn -type f \( -name "*.app" -o ! -name "*.*" \) -exec cp {} working/ \;
         echo "Files to decrypt:"
         ls -l working/
@@ -52,17 +50,35 @@ jobs:
         python3 keygen.py 000500001010B300 mypass | tee ../keylog.txt
         cd ..
 
-    - name: Extract title key from log
+    - name: Extract title key from log (robust)
       id: getkey
       run: |
-        KEY=$(grep -oP 'generated unencrypted key for .*? : \K[0-9a-fA-F]{32}' keylog.txt)
-        if [ -z "$KEY" ]; then
-          echo "Could not extract title key!"
-          cat keylog.txt
-          exit 1
-        fi
-        echo "Title key: $KEY"
-        echo "titlekey=$KEY" >> $GITHUB_OUTPUT
+        python3 << 'EOF'
+        import re
+        key = None
+        with open("keylog.txt") as f:
+            content = f.read()
+        print("Full generator output:")
+        print(content)
+        # Try multiple patterns
+        for pattern in [
+            r'generated unencrypted key for .*? : ([0-9a-fA-F]{32})',
+            r'unencrypted key:\s*([0-9a-fA-F]{32})',
+            r'title key:\s*([0-9a-fA-F]{32})',
+            r'key\s*:\s*([0-9a-fA-F]{32})',
+            r'([0-9a-fA-F]{32})'
+        ]:
+            match = re.search(pattern, content)
+            if match:
+                key = match.group(1)
+                break
+        if not key:
+            raise SystemExit("Could not find title key in generator output")
+        print(f"Extracted key: {key}")
+        with open("/tmp/titlekey.txt", "w") as f:
+            f.write(key)
+        EOF
+        echo "titlekey=$(cat /tmp/titlekey.txt)" >> $GITHUB_OUTPUT
 
     - name: Decrypt all content files
       run: |
@@ -102,7 +118,7 @@ jobs:
       run: |
         mkdir -p "Sonic & All-Stars Racing Transformed (USA) (Demo)/content"
         cp content_decrypted/* "Sonic & All-Stars Racing Transformed (USA) (Demo)/content/"
-        # Create minimal meta.xml
+        # Createminimal meta.xml
         cat > "Sonic & All-Stars Racing Transformed (USA) (Demo)/meta.xml" << 'XMLEOF'
         <?xml version="1.0" encoding="utf-8"?>
         <menu type="complex" access="777">
@@ -119,5 +135,5 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add demo-decrypted-content.zip.part*
-        git commit -m "Add decrypted demo content (with generated title key)" || echo "Nothing to commit"
+        git commit -m "Add decrypted demo content (v2)" || echo "Nothing to commit"
         git push
