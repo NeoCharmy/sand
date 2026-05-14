@@ -15,15 +15,13 @@ jobs:
 
     - name: Reassemble split parts
       run: |
-        # Detect any .partaa file and derive the prefix
         PARTAA=$(ls *.partaa 2>/dev/null | head -1)
         if [ -z "$PARTAA" ]; then
           echo "No split parts found!"
           exit 1
         fi
-        # Remove trailing .partaa to get the prefix
         PREFIX="${PARTAA%.partaa}"
-        echo "Found prefix: $PREFIX"
+        echo "Using prefix: $PREFIX"
         cat ${PREFIX}.part* > demo-reassembled.zip
 
     - name: Extract CDN files into working folder
@@ -33,24 +31,18 @@ jobs:
 
     - name: Gather and rename CDN files
       run: |
-        # Copy all CDN files to current directory
         find cdn-files -type f \( -name "*.app" -o -name "*.h3" -o -name "*.tmd" -o -name "tmd.*" -o -name "*.cert" -o -name "*.tik" \) -exec cp {} . \;
-        # Copy ONLY extensionless regular files (potential .app files)
         find cdn-files -type f ! -name "*.*" -exec cp {} . \;
 
-        # Rename tmd.0 to title.tmd
         if [ -f "tmd.0" ]; then mv tmd.0 title.tmd; fi
 
-        # Rename numeric extensionless files to .app (only if not already renamed)
         for f in *; do
-          # Check if it's a regular file with no extension and name matches hex pattern
           if [ -f "$f" ] && [[ "$f" =~ ^[0-9a-f]{8}$ ]] && [ ! -f "$f.app" ]; then
             mv "$f" "$f.app"
             echo "Renamed $f to $f.app"
           fi
         done
-
-        echo "Files ready for decryption:"
+        echo "Files ready:"
         ls -la
 
     - name: Install Python cryptography
@@ -68,7 +60,6 @@ jobs:
         TITLE_KEY = bytes(16)   # all zeros for this demo
 
         # --- Generate title.tik ---
-        # Encrypt the title key with the common key (IV = title ID padded to 16 bytes)
         iv_title = TITLE_ID.ljust(16, b'\x00')
         cipher_enc = AES.new(COMMON_KEY, AES.MODE_CBC, iv_title)
         encrypted_title_key = cipher_enc.encrypt(TITLE_KEY)
@@ -110,7 +101,8 @@ jobs:
         os.makedirs(f"{LOADIINE}/meta", exist_ok=True)
 
         import shutil
-        for fname in ["title.tmd", "title.tik", "title.cert"]:if os.path.exists(fname):
+        for fname in ["title.tmd", "title.tik", "title.cert"]:
+            if os.path.exists(fname):
                 shutil.copy(fname, f"{LOADIINE}/meta/")
 
         # --- Decrypt each content file ---
