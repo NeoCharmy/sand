@@ -1,4 +1,4 @@
-name: Decrypt USA Demo from Existing Split Parts
+name: Generate title.tik and title.cert
 
 on:
   workflow_dispatch:
@@ -7,165 +7,57 @@ permissions:
   contents: write
 
 jobs:
-  decrypt:
+  generate:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Reassemble split parts
+    - name: Generate title.tik and title.cert
       run: |
-        PARTAA=$(ls *.partaa 2>/dev/null | head -1)
-        if [ -z "$PARTAA" ]; then
-          echo "No split parts found!"
-          exit 1
-        fi
-        PREFIX="${PARTAA%.partaa}"
-        echo "Using prefix: $PREFIX"
-        cat ${PREFIX}.part* > demo-reassembled.zip
+        python3 -c '
+import struct
+from Crypto.Cipher import AES
+import os
 
-    - name: Extract CDN files into working folder
-      run: |
-        mkdir -p cdn-files
-        unzip -q demo-reassembled.zip -d cdn-files
+TITLE_ID = bytes.fromhex("000500001010B300")
+COMMON_KEY = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
+TITLE_KEY = bytes(16)
 
-    - name: Gather and rename CDN files
-      run: |
-        find cdn-files -type f \( -name "*.app" -o -name "*.h3" -o -name "*.tmd" -o -name "tmd.*" -o -name "*.cert" -o -name "*.tik" \) -exec cp {} . \;
-        find cdn-files -type f ! -name "*.*" -exec cp {} . \;
+# --- title.tik ---
+iv_title = TITLE_ID.ljust(16, b"\x00")
+cipher_enc = AES.new(COMMON_KEY, AES.MODE_CBC, iv_title)
+encrypted_title_key = cipher_enc.encrypt(TITLE_KEY)
 
-        if [ -f "tmd.0" ]; then mv tmd.0 title.tmd; fi
+ticket = bytearray(848)
+issuer = b"Root-CA00000003-XS0000000c\x00"
+ticket[0x000:0x040] = issuer.ljust(0x40, b"\x00")
+struct.pack_into(">H", ticket, 0x1A0, 1)
+ticket[0x1B1] = 0
+ticket[0x1BF:0x1CF] = encrypted_title_key
+ticket[0x1DC:0x1E4] = TITLE_ID
+with open("title.tik", "wb") as f:
+    f.write(ticket)
+print("title.tik generated")
 
-        for f in *; do
-          if [ -f "$f" ] && [[ "$f" =~ ^[0-9a-f]{8}$ ]] && [ ! -f "$f.app" ]; then
-            mv "$f" "$f.app"
-            echo "Renamed $f to $f.app"
-          fi
-        done
-        echo "Files ready:"
-        ls -la
-
-    - name: Install Python cryptography
+# --- title.cert (minimal) ---
+cert = bytearray(0x300)
+cert_issuer = b"Root-CA00000003-XS0000000c\x00"
+cert[0x000:0x040] = cert_issuer.ljust(0x40, b"\x00")
+struct.pack_into(">I", cert, 0x040, 0x00010001)
+with open("title.cert", "wb") as f:
+    f.write(cert)
+print("title.cert generated")
+'
+      env:
+        PYTHONPATH: ""
+    - name: Install pycryptodome (if needed)
       run: pip install pycryptodome
 
-    - name: Generate ticket, certificate, and decrypt to Loadiine
-      run: |
-        python3 << 'EOF'
-        import os, struct
-        from Crypto.Cipher import AES
-
-        # --- Constants ---
-        TITLE_ID = bytes.fromhex("000500001010B300")
-        COMMON_KEY = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
-        TITLE_KEY = bytes(16)   # all zeros for this demo
-
-        # --- Generate title.tik ---
-        iv_title = TITLE_ID.ljust(16, b'\x00')
-        cipher_enc = AES.new(COMMON_KEY, AES.MODE_CBC, iv_title)
-        encrypted_title_key = cipher_enc.encrypt(TITLE_KEY)
-
-        ticket = bytearray(848)
-        issuer = b"Root-CA00000003-XS0000000c\x00"
-        ticket[0x000:0x040] = issuer.ljust(0x40, b'\x00')
-        struct.pack_into(">H", ticket, 0x1A0, 1)          # version
-        ticket[0x1B1] = 0                                  # common key index
-        ticket[0x1BF:0x1CF] = encrypted_title_key          # encrypted title key
-        ticket[0x1DC:0x1E4] = TITLE_ID                     # title ID
-
-        with open("title.tik", "wb") as f:
-            f.write(ticket)
-        print("Generated title.tik")
-
-        # --- Generate minimal title.cert ---
-        cert = bytearray(0x300)
-        cert_issuer = b"Root-CA00000003-XS0000000c\x00"
-        cert[0x000:0x040] = cert_issuer.ljust(0x40, b'\x00')
-        struct.pack_into(">I", cert, 0x040, 0x00010001)
-        with open("title.cert", "wb") as f:
-            f.write(cert)
-        print("Generated title.cert")
-
-        # --- Read TMD to learn content structure ---
-        if not os.path.exists("title.tmd"):
-            print("ERROR: title.tmd not found!")
-            exit(1)
-        with open("title.tmd", "rb") as f:
-            tmd = f.read()
-        content_count = struct.unpack_from(">H", tmd, 0x1E6)[0]
-        print(f"Content count: {content_count}")
-
-        # --- Create Loadiine folder ---
-        LOADIINE = "Sonic & All-Stars Racing Transformed (USA) (Demo)"
-        os.makedirs(f"{LOADIINE}/code", exist_ok=True)
-        os.makedirs(f"{LOADIINE}/content", exist_ok=True)
-        os.makedirs(f"{LOADIINE}/meta", exist_ok=True)
-
-        import shutil
-        for fname in ["title.tmd", "title.tik", "title.cert"]:
-            if os.path.exists(fname):
-                shutil.copy(fname, f"{LOADIINE}/meta/")
-
-        # --- Decrypt each content file ---
-        for i in range(content_count):
-            offset = 0x1F0 + i * 36
-            cid   = struct.unpack_from(">I", tmd, offset)[0]
-            index = struct.unpack_from(">H", tmd, offset+4)[0]
-            ctype = struct.unpack_from(">H", tmd, offset+6)[0]
-            enc   = struct.unpack_from(">H", tmd, offset+16)[0] & 0x2
-
-            # Find the .app file (try with and without extension)
-            app_file = f"{cid:08x}.app"
-            if not os.path.exists(app_file):
-                app_file = f"{cid:08x}"
-            if not os.path.exists(app_file):
-                print(f"Missing {app_file}, skipping")
-                continue
-
-            with open(app_file, "rb") as f:
-                data = f.read()
-            print(f"Read {app_file}: {len(data)} bytes")
-
-            if enc:
-                # Decrypt the encrypted title key using common key
-                iv_tk = TITLE_ID.ljust(16, b'\x00')
-                cipher_tk = AES.new(COMMON_KEY, AES.MODE_CBC, iv_tk)
-                dec_title_key = cipher_tk.decrypt(encrypted_title_key)
-
-                # Decrypt content using decrypted title key
-                iv_content = struct.pack(">H", index).ljust(16, b'\x00')
-                cipher_content = AES.new(dec_title_key, AES.MODE_CBC, iv_content)
-                data = cipher_content.decrypt(data)
-
-                # Remove PKCS#7 padding
-                pad_len = data[-1]
-                if pad_len <= 16:
-                    data = data[:-pad_len]
-
-            # Determine output folder
-            if ctype == 0x0001:          # executable (.rpx)
-                out_file = f"{LOADIINE}/code/{os.path.basename(app_file)}.rpx"
-            elif ctype == 0x0002:        # content
-                out_file = f"{LOADIINE}/content/{os.path.basename(app_file)}"
-            else:
-                out_file = f"{LOADIINE}/meta/{os.path.basename(app_file)}"
-
-            with open(out_file, "wb") as f:
-                f.write(data)
-            print(f"Decrypted {app_file} -> {out_file} ({len(data)} bytes)")
-
-        print("Decryption complete!")
-        EOF
-
-    - name: Package decrypted game
-      run: |
-        zip -r demo-decrypted.zip "Sonic & All-Stars Racing Transformed (USA) (Demo)"
-        split -b 90M demo-decrypted.zip demo-decrypted.zip.part
-        rm demo-decrypted.zip
-
-    - name: Commit decrypted parts
+    - name: Commit the two files
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add demo-decrypted.zip.part*
-        git commit -m "Add decrypted demo (Loadiine format)" || echo "Nothing to commit"
+        git add title.tik title.cert
+        git commit -m "Add valid title.tik and title.cert for USA demo" || echo "Nothing to commit"
         git push
