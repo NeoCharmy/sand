@@ -1,94 +1,67 @@
-name: Generate valid title.tik and title.cert for USA Demo
+if os.path.exists(fname):
+                shutil.copy(fname, f"{LOADIINE}/meta/")
 
-on:
-  workflow_dispatch:
+        # --- Decrypt each content file ---
+        for i in range(content_count):
+            offset = 0x1F0 + i * 36
+            cid   = struct.unpack_from(">I", tmd, offset)[0]
+            index = struct.unpack_from(">H", tmd, offset+4)[0]
+            ctype = struct.unpack_from(">H", tmd, offset+6)[0]
+            enc   = struct.unpack_from(">H", tmd, offset+16)[0] & 0x2
 
-permissions:
-  contents: write
+            # Find the .app file (try with and without extension)
+            app_file = f"{cid:08x}.app"
+            if not os.path.exists(app_file):
+                app_file = f"{cid:08x}"
+            if not os.path.exists(app_file):
+                print(f"Missing {app_file}, skipping")
+                continue
 
-jobs:
-  generate-tik:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+            with open(app_file, "rb") as f:
+                data = f.read()
+            print(f"Read {app_file}: {len(data)} bytes")
 
-    - name: Generate title.tik and title.cert
-      run: |
-        python3 << 'EOF'
-        import struct
+            if enc:
+                # Decrypt the encrypted title key using common key
+                iv_tk = TITLE_ID.ljust(16, b'\x00')
+                cipher_tk = AES.new(COMMON_KEY, AES.MODE_CBC, iv_tk)
+                dec_title_key = cipher_tk.decrypt(encrypted_title_key)
 
-        # Title ID for the USA demo
-        title_id = bytes.fromhex("000500001010B300")
-        # Title key for this demo (from known public database)
-        title_key = bytes.fromhex("00000000000000000000000000000000")  # actually zeros for this demo
+                # Decrypt content using decrypted title key
+                iv_content = struct.pack(">H", index).ljust(16, b'\x00')
+                cipher_content = AES.new(dec_title_key, AES.MODE_CBC, iv_content)
+                data = cipher_content.decrypt(data)
 
-        # Common key for Wii U eShop (NUS) titles
-        common_key = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
+                # Remove PKCS#7 padding
+                pad_len = data[-1]
+                if pad_len <= 16:
+                    data = data[:-pad_len]
 
-        # Build a valid 848-byte ticket
-        ticket = bytearray(848)
+            # Determine output folder
+            if ctype == 0x0001:          # executable (.rpx)
+                out_file = f"{LOADIINE}/code/{os.path.basename(app_file)}.rpx"
+            elif ctype == 0x0002:        # content
+                out_file = f"{LOADIINE}/content/{os.path.basename(app_file)}"
+            else:
+                out_file = f"{LOADIINE}/meta/{os.path.basename(app_file)}"
 
-        # Signature Issuer (Root-CA00000003-XS0000000c for eShop demos)
-        issuer = b"Root-CA00000003-XS0000000c\x00"
-        ticket[0x000:0x040] = issuer.ljust(0x40, b'\x00')
+            with open(out_file, "wb") as f:
+                f.write(data)
+            print(f"Decrypted {app_file} -> {out_file} ({len(data)} bytes)")
 
-        # Signature (all zeros for now – CDecrypt skips signature)
-        # ticket[0x040:0x140] already zeros
-
-        # Server public key (empty)
-        ticket[0x180:0x19F] = b'\x00' * 0x1F
-
-        # Version (1)
-        struct.pack_into(">H", ticket, 0x1A0, 1)
-
-        # License type (0 = permanent)
-        ticket[0x1A4] = 0
-
-        # Common key index (0 = common key 0)
-        ticket[0x1B1] = 0
-
-        # Encrypted title key (16 bytes at offset 0x1BF)
-        # For a null title key, the encrypted bytes are just zeros
-        ticket[0x1BF:0x1CF] = title_key
-
-        # Ticket ID (8 bytes, set to zero)
-        # Device ID (4 bytes, zero)
-        # Title ID (8 bytes at offset 0x1DC)
-        ticket[0x1DC:0x1E4] = title_id
-
-        # Access flags (4 bytes, zero)
-        # Reserved (4 bytes, zero)
-        # Content index (2 bytes, zero)
-        # Reserved (6 bytes, zero)
-        # Time limits (4 bytes, zero)
-        # Time limit period (4 bytes, zero)
-
-        with open("title.tik", "wb") as f:
-            f.write(ticket)
-        print("title.tik generated")
-
-        # Create a minimal valid title.cert
-        cert = bytearray(0x300)
-        # Signature Issuer
-        cert_issuer = b"Root-CA00000003-XS0000000c\x00"
-        cert[0x000:0x040] = cert_issuer.ljust(0x40, b'\x00')
-        # Public key type (RSA-2048)
-        struct.pack_into(">I", cert, 0x040, 0x00010001)
-        # Name (Root)
-        cert[0x080:0x090] = b"Root\x00"
-        # Certificate ID (0)
-        struct.pack_into(">I", cert, 0x09C, 0)
-
-        with open("title.cert", "wb") as f:
-            f.write(cert)
-        print("title.cert generated")
+        print("Decryption complete!")
         EOF
 
-    - name: Commit files
+    - name: Package decrypted game
+      run: |
+        zip -r demo-decrypted.zip "Sonic & All-Stars Racing Transformed (USA) (Demo)"
+        split -b 90M demo-decrypted.zip demo-decrypted.zip.part
+        rm demo-decrypted.zip
+
+    - name: Commit decrypted parts
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add title.tik title.cert
-        git commit -m "Add valid title.tik and title.cert" || echo "Nothing to commit"
+        git add demo-decrypted.zip.part*
+        git commit -m "Add decrypted demo (Loadiine format)" || echo "Nothing to commit"
         git push
