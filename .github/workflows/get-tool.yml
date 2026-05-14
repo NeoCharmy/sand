@@ -1,3 +1,116 @@
+name: Decrypt USA Demo from Existing Split Parts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  decrypt:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Reassemble split parts
+      run: |
+        # Detect any .partaa file and derive the prefix
+        PARTAA=$(ls *.partaa 2>/dev/null | head -1)
+        if [ -z "$PARTAA" ]; then
+          echo "No split parts found!"
+          exit 1
+        fi
+        # Remove trailing .partaa to get the prefix
+        PREFIX="${PARTAA%.partaa}"
+        echo "Found prefix: $PREFIX"
+        cat ${PREFIX}.part* > demo-reassembled.zip
+
+    - name: Extract CDN files into working folder
+      run: |
+        mkdir -p cdn-files
+        unzip -q demo-reassembled.zip -d cdn-files
+
+    - name: Gather and rename CDN files
+      run: |
+        # Copy all CDN files to current directory
+        find cdn-files -type f \( -name "*.app" -o -name "*.h3" -o -name "*.tmd" -o -name "tmd.*" -o -name "*.cert" -o -name "*.tik" \) -exec cp {} . \;
+        # Copy ONLY extensionless regular files (potential .app files)
+        find cdn-files -type f ! -name "*.*" -exec cp {} . \;
+
+        # Rename tmd.0 to title.tmd
+        if [ -f "tmd.0" ]; then mv tmd.0 title.tmd; fi
+
+        # Rename numeric extensionless files to .app (only if not already renamed)
+        for f in *; do
+          # Check if it's a regular file with no extension and name matches hex pattern
+          if [ -f "$f" ] && [[ "$f" =~ ^[0-9a-f]{8}$ ]] && [ ! -f "$f.app" ]; then
+            mv "$f" "$f.app"
+            echo "Renamed $f to $f.app"
+          fi
+        done
+
+        echo "Files ready for decryption:"
+        ls -la
+
+    - name: Install Python cryptography
+      run: pip install pycryptodome
+
+    - name: Generate ticket, certificate, and decrypt to Loadiine
+      run: |
+        python3 << 'EOF'
+        import os, struct
+        from Crypto.Cipher import AES
+
+        # --- Constants ---
+        TITLE_ID = bytes.fromhex("000500001010B300")
+        COMMON_KEY = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
+        TITLE_KEY = bytes(16)   # all zeros for this demo
+
+        # --- Generate title.tik ---
+        # Encrypt the title key with the common key (IV = title ID padded to 16 bytes)
+        iv_title = TITLE_ID.ljust(16, b'\x00')
+        cipher_enc = AES.new(COMMON_KEY, AES.MODE_CBC, iv_title)
+        encrypted_title_key = cipher_enc.encrypt(TITLE_KEY)
+
+        ticket = bytearray(848)
+        issuer = b"Root-CA00000003-XS0000000c\x00"
+        ticket[0x000:0x040] = issuer.ljust(0x40, b'\x00')
+        struct.pack_into(">H", ticket, 0x1A0, 1)          # version
+        ticket[0x1B1] = 0                                  # common key index
+        ticket[0x1BF:0x1CF] = encrypted_title_key          # encrypted title key
+        ticket[0x1DC:0x1E4] = TITLE_ID                     # title ID
+
+        with open("title.tik", "wb") as f:
+            f.write(ticket)
+        print("Generated title.tik")
+
+        # --- Generate minimal title.cert ---
+        cert = bytearray(0x300)
+        cert_issuer = b"Root-CA00000003-XS0000000c\x00"
+        cert[0x000:0x040] = cert_issuer.ljust(0x40, b'\x00')
+        struct.pack_into(">I", cert, 0x040, 0x00010001)
+        with open("title.cert", "wb") as f:
+            f.write(cert)
+        print("Generated title.cert")
+
+        # --- Read TMD to learn content structure ---
+        if not os.path.exists("title.tmd"):
+            print("ERROR: title.tmd not found!")
+            exit(1)
+        with open("title.tmd", "rb") as f:
+            tmd = f.read()
+        content_count = struct.unpack_from(">H", tmd, 0x1E6)[0]
+        print(f"Content count: {content_count}")
+
+        # --- Create Loadiine folder ---
+        LOADIINE = "Sonic & All-Stars Racing Transformed (USA) (Demo)"
+        os.makedirs(f"{LOADIINE}/code", exist_ok=True)
+        os.makedirs(f"{LOADIINE}/content", exist_ok=True)
+        os.makedirs(f"{LOADIINE}/meta", exist_ok=True)
+
+        import shutil
+        for fname in ["title.tmd", "title.tik", "title.cert"]:
 if os.path.exists(fname):
                 shutil.copy(fname, f"{LOADIINE}/meta/")
 
