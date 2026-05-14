@@ -111,7 +111,7 @@ jobs:
 
         import shutil
         for fname in ["title.tmd", "title.tik", "title.cert"]:
-if os.path.exists(fname):
+        if os.path.exists(fname):
                 shutil.copy(fname, f"{LOADIINE}/meta/")
 
         # --- Decrypt each content file ---
