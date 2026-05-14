@@ -1,4 +1,4 @@
-name: Fetch and Decrypt Demo via FunKiiU
+name: Direct Decrypt Demo via Nintendo CDN
 
 on:
   workflow_dispatch:
@@ -13,81 +13,64 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install Python dependencies
-      run: pip install requests pycryptodome
-
-    - name: Clone FunKiiU
-      run: git clone --depth 1 https://github.com/weidaidai/FunKiiU.git
-
-    - name: Download CDN files for the demo
+    - name: Download correct TMD from Nintendo CDN
       run: |
-        cd FunKiiU
-        python3 FunKiiU.py -title 000500001010B300 -key null
-        cd ..
+        wget -q -O title.tmd "http://ccs.cdn.wup.shop.nintendo.net/ccs/download/000500001010B300/tmd"
 
-    - name: Find the downloaded CDN folder
-      id: find_cdn
-      run: |
-        # Show the complete directory structure for debugging
-        find FunKiiU -type f | head -50
-        # Locate any directory that contains a .tmd file
-        TMD_PATH=$(find FunKiiU -type f -name "*.tmd" | head -1)
-        if [ -z "$TMD_PATH" ]; then
-          echo "No TMD file found!"
-          exit 1
-        fi
-        CDN_DIR=$(dirname "$TMD_PATH")
-        echo "CDN directory found at: $CDN_DIR"
-        echo "cdn_dir=$CDN_DIR" >> $GITHUB_OUTPUT
+    - name: Install Python crypto
+      run: pip install pycryptodome
 
-    - name: Decrypt CDN files into Loadiine
-      env:
-        CDN_DIR: ${{ steps.find_cdn.outputs.cdn_dir }}
+    - name: Generate ticket, certificate, and decrypt all .app files
       run: |
         python3 << 'EOF'
         import os, struct
         from Crypto.Cipher import AES
 
-        CDN_DIR = os.environ["CDN_DIR"]
+        TITLE_ID = bytes.fromhex("000500001010B300")
+        COMMON_KEY = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
+        TITLE_KEY = bytes(16)   # all zeros for this demo
+
+        # ----- Generate title.tik -----
+        iv_title = TITLE_ID.ljust(16, b'\x00')
+        cipher_enc = AES.new(COMMON_KEY, AES.MODE_CBC, iv_title)
+        encrypted_title_key = cipher_enc.encrypt(TITLE_KEY)
+
+        ticket = bytearray(848)
+        issuer = b"Root-CA00000003-XS0000000c\x00"
+        ticket[0x000:0x040] = issuer.ljust(0x40, b'\x00')
+        struct.pack_into(">H", ticket, 0x1A0, 1)
+        ticket[0x1B1] = 0
+        ticket[0x1BF:0x1CF] = encrypted_title_key
+        ticket[0x1DC:0x1E4] = TITLE_ID
+        with open("title.tik", "wb") as f:
+            f.write(ticket)
+
+        # ----- Generate title.cert (minimal) -----
+        cert = bytearray(0x300)
+        cert_issuer = b"Root-CA00000003-XS0000000c\x00"
+        cert[0x000:0x040] = cert_issuer.ljust(0x40, b'\x00')
+        struct.pack_into(">I", cert, 0x040, 0x00010001)
+        with open("title.cert", "wb") as f:
+            f.write(cert)
+
+        # ----- Read the fresh TMD -----
+        with open("title.tmd", "rb") as f:
+            tmd = f.read()
+        content_count = struct.unpack_from(">H", tmd, 0x1E6)[0]
+        print(f"Valid content count from Nintendo: {content_count}")
+
+        # ----- Create Loadiine folder -----
         LOADIINE = "Sonic & All-Stars Racing Transformed (USA) (Demo)"
         os.makedirs(f"{LOADIINE}/code", exist_ok=True)
         os.makedirs(f"{LOADIINE}/content", exist_ok=True)
         os.makedirs(f"{LOADIINE}/meta", exist_ok=True)
 
-        # Find TMD and ticket files
-        tmd_path = None
-        tik_path = None
-        for f in os.listdir(CDN_DIR):
-            if f.endswith(".tmd"):
-                tmd_path = os.path.join(CDN_DIR, f)
-            elif f.endswith(".tik"):
-                tik_path = os.path.join(CDN_DIR, f)
-
-        if not tmd_path:
-            raise SystemExit("TMD not found")
-        if not tik_path:
-            raise SystemExit("Ticket not found")
-
-        with open(tmd_path, "rb") as f:
-            tmd = f.read()
-        with open(tik_path, "rb") as f:
-            tik = f.read()
-
-        # Extract title key from ticket
-        COMMON_KEY = bytes.fromhex("D7B00402659BA2ABD2CB0DB27FA2B656")
-        TITLE_ID = bytes.fromhex("000500001010B300")
-        encrypted_title_key = tik[0x1BF:0x1CF]
-        iv_title = TITLE_ID.ljust(16, b'\x00')
-        cipher_tk = AES.new(COMMON_KEY, AES.MODE_CBC, iv_title)
-        dec_title_key = cipher_tk.decrypt(encrypted_title_key)
-
-        content_count = struct.unpack_from(">H", tmd, 0x1E6)[0]
-        print(f"Content count: {content_count}")
-
         import shutil
-        shutil.copy(tmd_path, f"{LOADIINE}/meta/title.tmd")
-        shutil.copy(tik_path, f"{LOADIINE}/meta/title.tik")
+        for fname in ["title.tmd", "title.tik", "title.cert"]:
+            if os.path.exists(fname):
+                shutil.copy(fname, f"{LOADIINE}/meta/")
 
+        # ----- Decrypt each content file -----
         for i in range(content_count):
             offset = 0x1F0 + i * 36
             cid   = struct.unpack_from(">I", tmd, offset)[0]
@@ -95,36 +78,42 @@ jobs:
             ctype = struct.unpack_from(">H", tmd, offset+6)[0]
             enc   = struct.unpack_from(">H", tmd, offset+16)[0] & 0x2
 
-            app_file = os.path.join(CDN_DIR, f"{cid:08x}.app")
+            app_file = f"{cid:08x}.app"
             if not os.path.exists(app_file):
-                app_file = os.path.join(CDN_DIR, f"{cid:08x}")
+                app_file = f"{cid:08x}"
             if not os.path.exists(app_file):
                 print(f"Missing {app_file}, skipping")
                 continue
 
             with open(app_file, "rb") as f:
                 data = f.read()
-            print(f"Read {cid:08x}: {len(data)} bytes")
+            print(f"Read {app_file}: {len(data)} bytes")
 
             if enc:
+                iv_tk = TITLE_ID.ljust(16, b'\x00')
+                cipher_tk = AES.new(COMMON_KEY, AES.MODE_CBC, iv_tk)
+                dec_title_key = cipher_tk.decrypt(encrypted_title_key)
+
                 iv_content = struct.pack(">H", index).ljust(16, b'\x00')
                 cipher_content = AES.new(dec_title_key, AES.MODE_CBC, iv_content)
                 data = cipher_content.decrypt(data)
+
                 pad_len = data[-1]
                 if pad_len <= 16:
                     data = data[:-pad_len]
 
             if ctype == 0x0001:
-                out_file = f"{LOADIINE}/code/{cid:08x}.rpx"
+                out_file = f"{LOADIINE}/code/{os.path.basename(app_file)}.rpx"
             elif ctype == 0x0002:
-                out_file = f"{LOADIINE}/content/{cid:08x}.app"
+                out_file = f"{LOADIINE}/content/{os.path.basename(app_file)}"
             else:
-                out_file = f"{LOADIINE}/meta/{cid:08x}"
+                out_file = f"{LOADIINE}/meta/{os.path.basename(app_file)}"
 
             with open(out_file, "wb") as f:
                 f.write(data)
             print(f"Decrypted to {out_file} ({len(data)} bytes)")
-        print("Decryption complete!")
+
+        print("All done!")
         EOF
 
     - name: Package decrypted game
