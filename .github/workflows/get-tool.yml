@@ -22,25 +22,28 @@ jobs:
     - name: Download CDN files for the demo
       run: |
         cd FunKiiU
-        # Title ID for Sonic & All-Stars Racing Transformed (USA) (Demo)
         python3 FunKiiU.py -title 000500001010B300 -key null
         cd ..
 
-    - name: Locate downloaded CDN files
-      id: locate
+    - name: Find the downloaded CDN folder
+      id: find_cdn
       run: |
-        # FunKiiU stores files in a folder named after the title
-        CDN_DIR=$(find FunKiiU -type d -name "000500001010B300" | head -1)
-        if [ -z "$CDN_DIR" ]; then
-          echo "CDN directory not found!"
+        # Show the complete directory structure for debugging
+        find FunKiiU -type f | head -50
+        # Locate any directory that contains a .tmd file
+        TMD_PATH=$(find FunKiiU -type f -name "*.tmd" | head -1)
+        if [ -z "$TMD_PATH" ]; then
+          echo "No TMD file found!"
           exit 1
         fi
-        echo "CDN files at: $CDN_DIR"
+        CDN_DIR=$(dirname "$TMD_PATH")
+        echo "CDN directory found at: $CDN_DIR"
         echo "cdn_dir=$CDN_DIR" >> $GITHUB_OUTPUT
 
     - name: Decrypt CDN files into Loadiine
+      env:
+        CDN_DIR: ${{ steps.find_cdn.outputs.cdn_dir }}
       run: |
-        CDN_DIR="${{ steps.locate.outputs.cdn_dir }}"
         python3 << 'EOF'
         import os, struct
         from Crypto.Cipher import AES
@@ -51,7 +54,7 @@ jobs:
         os.makedirs(f"{LOADIINE}/content", exist_ok=True)
         os.makedirs(f"{LOADIINE}/meta", exist_ok=True)
 
-        # Read TMD and ticket
+        # Find TMD and ticket files
         tmd_path = None
         tik_path = None
         for f in os.listdir(CDN_DIR):
@@ -116,4 +119,24 @@ jobs:
             elif ctype == 0x0002:
                 out_file = f"{LOADIINE}/content/{cid:08x}.app"
             else:
-                out_file = f"{LOADIINE}/meta/{cid:08x}
+                out_file = f"{LOADIINE}/meta/{cid:08x}"
+
+            with open(out_file, "wb") as f:
+                f.write(data)
+            print(f"Decrypted to {out_file} ({len(data)} bytes)")
+        print("Decryption complete!")
+        EOF
+
+    - name: Package decrypted game
+      run: |
+        zip -r demo-decrypted.zip "Sonic & All-Stars Racing Transformed (USA) (Demo)"
+        split -b 90M demo-decrypted.zip demo-decrypted.zip.part
+        rm demo-decrypted.zip
+
+    - name: Commit split parts
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add demo-decrypted.zip.part*
+        git commit -m "Add decrypted demo (Loadiine format)" || echo "Nothing to commit"
+        git push
